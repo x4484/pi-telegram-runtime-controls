@@ -1,0 +1,21 @@
+{
+  "name": "pi-telegram-runtime-controls",
+  "version": "0.1.0",
+  "description": "Telegram-native runtime controls for pi-telegram sessions.",
+  "type": "module",
+  "private": true,
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "telegram",
+    "runtime-controls"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "dependencies": {
+    "@llblab/pi-telegram": "0.16.6"
+  }
+}
