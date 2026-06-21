@@ -29,7 +29,7 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 					order: 40,
 					handler: async (commandCtx) => {
 						await commandCtx.reply("Reload queued.");
-						await commandCtx.enqueuePrompt(`/${TELEGRAM_RELOAD_PI_COMMAND}`);
+						queuePiReload(pi);
 					},
 				});
 			} catch (error) {
@@ -69,7 +69,7 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 							replyMarkup: { inline_keyboard: [] },
 						});
 						await sectionCtx.answerCallback("Reload queued.");
-						await sectionCtx.enqueuePrompt(`/${TELEGRAM_RELOAD_PI_COMMAND}`);
+						queuePiReload(pi);
 						return "handled";
 					},
 				});
@@ -101,6 +101,10 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 		unregisterTelegramSection?.();
 		unregisterTelegramSection = undefined;
 	});
+}
+
+function queuePiReload(pi: ExtensionAPI): void {
+	pi.sendUserMessage(`/${TELEGRAM_RELOAD_PI_COMMAND}`, { deliverAs: "followUp" });
 }
 
 function buildReloadRuntimeSectionView(confirmData: string, cancelData: string) {
