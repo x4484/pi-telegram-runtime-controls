@@ -15,7 +15,5 @@
       "./index.ts"
     ]
   },
-  "dependencies": {
-    "@llblab/pi-telegram": "0.16.6"
-  }
+  "dependencies": {}
 }

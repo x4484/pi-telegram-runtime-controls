@@ -7,9 +7,9 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { registerTelegramCommand } from "@llblab/pi-telegram/commands";
-import { registerTelegramSection } from "@llblab/pi-telegram/sections";
 
+const TELEGRAM_COMMAND_REGISTRY_KEY = "__piTelegramCommandRegistry__";
+const TELEGRAM_SECTION_REGISTRY_KEY = "__piTelegramSectionRegistry__";
 const TELEGRAM_RELOAD_PI_COMMAND = "telegram-reload-runtime";
 const TELEGRAM_RELOAD_COMMAND = "reload_runtime";
 const TELEGRAM_RELOAD_SECTION_ID = "pi-telegram-runtime-controls/reload";
@@ -21,7 +21,7 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 	function ensureTelegramControls(ctx?: ExtensionContext) {
 		if (!unregisterTelegramCommand) {
 			try {
-				unregisterTelegramCommand = registerTelegramCommand({
+				unregisterTelegramCommand = registerTelegramCommandCompat({
 					name: TELEGRAM_RELOAD_COMMAND,
 					description: "Reload pi runtime",
 					showInMenu: true,
@@ -42,7 +42,7 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 
 		if (!unregisterTelegramSection) {
 			try {
-				unregisterTelegramSection = registerTelegramSection({
+				unregisterTelegramSection = registerTelegramSectionCompat({
 					id: TELEGRAM_RELOAD_SECTION_ID,
 					label: "🔄 Reload runtime",
 					order: 90,
@@ -103,8 +103,114 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 	});
 }
 
+interface TelegramExtensionCommandContext {
+	name: string;
+	args: string;
+	reply: (text: string) => Promise<void>;
+	enqueuePrompt: (prompt: string) => Promise<void>;
+}
+
+interface TelegramExtensionCommandRegistration {
+	name: string;
+	description?: string;
+	order?: number;
+	showInMenu?: boolean;
+	emoji?: string;
+	handler: (ctx: TelegramExtensionCommandContext) => Promise<void> | void;
+}
+
+interface RegisteredTelegramExtensionCommand {
+	name: string;
+	description?: string;
+	order: number;
+	showInMenu: boolean;
+	emoji?: string;
+	handler: TelegramExtensionCommandRegistration["handler"];
+}
+
+interface TelegramExtensionCommandRegistry {
+	commands: Map<string, RegisteredTelegramExtensionCommand>;
+}
+
+interface TelegramSectionRegistration {
+	id: string;
+	label: string;
+	order?: number;
+	render: (ctx: {
+		callbackData(action: string, payload?: string): string;
+	}) => unknown;
+	handleCallback?: (ctx: {
+		action: string;
+		edit(view: unknown): Promise<void>;
+		answerCallback(text?: string): Promise<void>;
+	}) => Promise<"handled" | "pass"> | "handled" | "pass";
+}
+
+interface TelegramSectionRegistry {
+	register(section: TelegramSectionRegistration): () => void;
+}
+
 function queuePiReload(pi: ExtensionAPI): void {
 	pi.sendUserMessage(`/${TELEGRAM_RELOAD_PI_COMMAND}`, { deliverAs: "followUp" });
+}
+
+function registerTelegramCommandCompat(
+	registration: TelegramExtensionCommandRegistration,
+): () => void {
+	const registry = getOrCreateTelegramCommandRegistry();
+	const name = normalizeTelegramCommandName(registration.name);
+	const previous = registry.commands.get(name);
+	const command: RegisteredTelegramExtensionCommand = {
+		name,
+		description: registration.description,
+		order: registration.order ?? 0,
+		showInMenu: registration.showInMenu ?? false,
+		emoji: registration.emoji?.trim() || undefined,
+		handler: registration.handler,
+	};
+	registry.commands.set(name, command);
+	return () => {
+		if (registry.commands.get(name) !== command) return;
+		if (previous) {
+			registry.commands.set(name, previous);
+			return;
+		}
+		registry.commands.delete(name);
+	};
+}
+
+function registerTelegramSectionCompat(
+	registration: TelegramSectionRegistration,
+): () => void {
+	const registry = (globalThis as Record<string, unknown>)[
+		TELEGRAM_SECTION_REGISTRY_KEY
+	] as TelegramSectionRegistry | undefined;
+	if (!registry?.register) {
+		throw new Error(
+			"Telegram section registry not available. Is pi-telegram loaded and initialized?",
+		);
+	}
+	return registry.register(registration);
+}
+
+function getOrCreateTelegramCommandRegistry(): TelegramExtensionCommandRegistry {
+	const globalRecord = globalThis as Record<string, unknown>;
+	const existing = globalRecord[TELEGRAM_COMMAND_REGISTRY_KEY];
+	if (
+		existing &&
+		typeof existing === "object" &&
+		"commands" in existing &&
+		(existing as { commands?: unknown }).commands instanceof Map
+	) {
+		return existing as TelegramExtensionCommandRegistry;
+	}
+	const registry: TelegramExtensionCommandRegistry = { commands: new Map() };
+	globalRecord[TELEGRAM_COMMAND_REGISTRY_KEY] = registry;
+	return registry;
+}
+
+function normalizeTelegramCommandName(name: string): string {
+	return name.trim().replace(/^\/+/, "").toLowerCase();
 }
 
 function buildReloadRuntimeSectionView(confirmData: string, cancelData: string) {
