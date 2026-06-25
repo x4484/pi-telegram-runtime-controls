@@ -11,17 +11,22 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 const TELEGRAM_COMMAND_REGISTRY_KEY = "__piTelegramCommandRegistry__";
 const TELEGRAM_SECTION_REGISTRY_KEY = "__piTelegramSectionRegistry__";
 const TELEGRAM_RELOAD_PI_COMMAND = "telegram-reload-runtime";
+const TELEGRAM_NEW_PI_COMMAND = "telegram-new-session";
 const TELEGRAM_RELOAD_COMMAND = "reload_runtime";
+const TELEGRAM_NEW_COMMAND = "new";
 const TELEGRAM_RELOAD_SECTION_ID = "pi-telegram-runtime-controls/reload";
+const TELEGRAM_NEW_SECTION_ID = "pi-telegram-runtime-controls/new";
 
 export default function telegramRuntimeControls(pi: ExtensionAPI) {
-	let unregisterTelegramCommand: (() => void) | undefined;
-	let unregisterTelegramSection: (() => void) | undefined;
+	let unregisterTelegramReloadCommand: (() => void) | undefined;
+	let unregisterTelegramNewCommand: (() => void) | undefined;
+	let unregisterTelegramReloadSection: (() => void) | undefined;
+	let unregisterTelegramNewSection: (() => void) | undefined;
 
 	function ensureTelegramControls(ctx?: ExtensionContext) {
-		if (!unregisterTelegramCommand) {
+		if (!unregisterTelegramReloadCommand) {
 			try {
-				unregisterTelegramCommand = registerTelegramCommandCompat({
+				unregisterTelegramReloadCommand = registerTelegramCommandCompat({
 					name: TELEGRAM_RELOAD_COMMAND,
 					description: "Reload pi runtime",
 					showInMenu: true,
@@ -40,9 +45,30 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 			}
 		}
 
-		if (!unregisterTelegramSection) {
+		if (!unregisterTelegramNewCommand) {
 			try {
-				unregisterTelegramSection = registerTelegramSectionCompat({
+				unregisterTelegramNewCommand = registerTelegramCommandCompat({
+					name: TELEGRAM_NEW_COMMAND,
+					description: "Start a new pi session",
+					showInMenu: true,
+					emoji: "🆕",
+					order: 41,
+					handler: async (commandCtx) => {
+						await commandCtx.reply("New session queued.");
+						queuePiNewSession(pi);
+					},
+				});
+			} catch (error) {
+				ctx?.ui.notify(
+					`Telegram new-session command unavailable: ${errorMessage(error)}`,
+					"warning",
+				);
+			}
+		}
+
+		if (!unregisterTelegramReloadSection) {
+			try {
+				unregisterTelegramReloadSection = registerTelegramSectionCompat({
 					id: TELEGRAM_RELOAD_SECTION_ID,
 					label: "🔄 Reload runtime",
 					order: 90,
@@ -80,6 +106,47 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 				);
 			}
 		}
+
+		if (!unregisterTelegramNewSection) {
+			try {
+				unregisterTelegramNewSection = registerTelegramSectionCompat({
+					id: TELEGRAM_NEW_SECTION_ID,
+					label: "🆕 New session",
+					order: 91,
+					render: (sectionCtx) =>
+						buildNewSessionSectionView(
+							sectionCtx.callbackData("confirm"),
+							sectionCtx.callbackData("cancel"),
+						),
+					handleCallback: async (sectionCtx) => {
+						if (sectionCtx.action === "cancel") {
+							await sectionCtx.edit({
+								text: "New session cancelled.",
+								parseMode: "plain",
+								replyMarkup: { inline_keyboard: [] },
+							});
+							await sectionCtx.answerCallback("Cancelled.");
+							return "handled";
+						}
+						if (sectionCtx.action !== "confirm") return "pass";
+
+						await sectionCtx.edit({
+							text: "<b>New session queued.</b>\n\nPi will switch to a fresh session after the queued command runs.",
+							parseMode: "html",
+							replyMarkup: { inline_keyboard: [] },
+						});
+						await sectionCtx.answerCallback("New session queued.");
+						queuePiNewSession(pi);
+						return "handled";
+					},
+				});
+			} catch (error) {
+				ctx?.ui.notify(
+					`Telegram new-session menu unavailable: ${errorMessage(error)}`,
+					"warning",
+				);
+			}
+		}
 	}
 
 	pi.registerCommand(TELEGRAM_RELOAD_PI_COMMAND, {
@@ -91,15 +158,37 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerCommand(TELEGRAM_NEW_PI_COMMAND, {
+		description: "Start a fresh pi session from Telegram",
+		handler: async (_args, ctx) => {
+			ctx.ui.notify("Starting new pi session...", "info");
+			const parentSession = ctx.sessionManager.getSessionFile();
+			const result = await ctx.newSession({
+				...(parentSession ? { parentSession } : {}),
+				withSession: async (newCtx) => {
+					newCtx.ui.notify("Started new session from Telegram.", "info");
+				},
+			});
+			if (result.cancelled) {
+				ctx.ui.notify("New session cancelled.", "warning");
+			}
+			return;
+		},
+	});
+
 	pi.on("session_start", async (_event, ctx) => {
 		ensureTelegramControls(ctx);
 	});
 
 	pi.on("session_shutdown", async () => {
-		unregisterTelegramCommand?.();
-		unregisterTelegramCommand = undefined;
-		unregisterTelegramSection?.();
-		unregisterTelegramSection = undefined;
+		unregisterTelegramReloadCommand?.();
+		unregisterTelegramReloadCommand = undefined;
+		unregisterTelegramNewCommand?.();
+		unregisterTelegramNewCommand = undefined;
+		unregisterTelegramReloadSection?.();
+		unregisterTelegramReloadSection = undefined;
+		unregisterTelegramNewSection?.();
+		unregisterTelegramNewSection = undefined;
 	});
 }
 
@@ -152,6 +241,10 @@ interface TelegramSectionRegistry {
 
 function queuePiReload(pi: ExtensionAPI): void {
 	pi.sendUserMessage(`/${TELEGRAM_RELOAD_PI_COMMAND}`, { deliverAs: "followUp" });
+}
+
+function queuePiNewSession(pi: ExtensionAPI): void {
+	pi.sendUserMessage(`/${TELEGRAM_NEW_PI_COMMAND}`, { deliverAs: "followUp" });
 }
 
 function registerTelegramCommandCompat(
@@ -221,6 +314,21 @@ function buildReloadRuntimeSectionView(confirmData: string, cancelData: string) 
 			inline_keyboard: [
 				[
 					{ text: "🔄 Reload", callback_data: confirmData },
+					{ text: "❌ Cancel", callback_data: cancelData },
+				],
+			],
+		},
+	};
+}
+
+function buildNewSessionSectionView(confirmData: string, cancelData: string) {
+	return {
+		text: "<b>Start a new session?</b>\n\nThis switches Pi to a fresh session. The current session stays saved in history.",
+		parseMode: "html" as const,
+		replyMarkup: {
+			inline_keyboard: [
+				[
+					{ text: "🆕 New session", callback_data: confirmData },
 					{ text: "❌ Cancel", callback_data: cancelData },
 				],
 			],
