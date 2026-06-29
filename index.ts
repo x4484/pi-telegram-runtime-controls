@@ -6,12 +6,17 @@
  * built into pi-telegram's core mobile companion surface.
  */
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+
+const execFileAsync = promisify(execFile);
 
 const TELEGRAM_COMMAND_REGISTRY_KEY = "__piTelegramCommandRegistry__";
 const TELEGRAM_SECTION_REGISTRY_KEY = "__piTelegramSectionRegistry__";
 const TELEGRAM_RELOAD_PI_COMMAND = "telegram-reload-runtime";
 const TELEGRAM_NEW_PI_COMMAND = "telegram-new-session";
+const PI_RELOAD_COMMAND = "reload";
 const PI_NEW_COMMAND = "new";
 const TELEGRAM_RELOAD_COMMAND = "reload_runtime";
 const TELEGRAM_NEW_COMMAND = "new";
@@ -23,6 +28,7 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 	let unregisterTelegramNewCommand: (() => void) | undefined;
 	let unregisterTelegramReloadSection: (() => void) | undefined;
 	let unregisterTelegramNewSection: (() => void) | undefined;
+	let latestContext: ExtensionContext | undefined;
 
 	function ensureTelegramControls(ctx?: ExtensionContext) {
 		if (!unregisterTelegramReloadCommand) {
@@ -34,8 +40,12 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 					emoji: "🔄",
 					order: 40,
 					handler: async (commandCtx) => {
-						await commandCtx.reply("Reload queued.");
-						queuePiReload(pi);
+						try {
+							await triggerPiTuiCommand(PI_RELOAD_COMMAND, latestContext);
+							await commandCtx.reply("Reload command sent.");
+						} catch (error) {
+							await commandCtx.reply(`Reload failed: ${errorMessage(error)}`);
+						}
 					},
 				});
 			} catch (error) {
@@ -55,8 +65,12 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 					emoji: "🆕",
 					order: 41,
 					handler: async (commandCtx) => {
-						await commandCtx.reply("New session queued.");
-						queuePiNewSession(pi);
+						try {
+							await triggerPiTuiCommand(PI_NEW_COMMAND, latestContext);
+							await commandCtx.reply("New session command sent.");
+						} catch (error) {
+							await commandCtx.reply(`New session failed: ${errorMessage(error)}`);
+						}
 					},
 				});
 			} catch (error) {
@@ -90,13 +104,22 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 						}
 						if (sectionCtx.action !== "confirm") return "pass";
 
-						await sectionCtx.edit({
-							text: "<b>Reload queued.</b>\n\nPi will reload after the queued command runs.",
-							parseMode: "html",
-							replyMarkup: { inline_keyboard: [] },
-						});
-						await sectionCtx.answerCallback("Reload queued.");
-						queuePiReload(pi);
+						try {
+							await triggerPiTuiCommand(PI_RELOAD_COMMAND, latestContext);
+							await sectionCtx.edit({
+								text: "<b>Reload command sent.</b>",
+								parseMode: "html",
+								replyMarkup: { inline_keyboard: [] },
+							});
+							await sectionCtx.answerCallback("Reload command sent.");
+						} catch (error) {
+							await sectionCtx.edit({
+								text: `Reload failed: ${errorMessage(error)}`,
+								parseMode: "plain",
+								replyMarkup: { inline_keyboard: [] },
+							});
+							await sectionCtx.answerCallback("Reload failed.");
+						}
 						return "handled";
 					},
 				});
@@ -131,13 +154,22 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 						}
 						if (sectionCtx.action !== "confirm") return "pass";
 
-						await sectionCtx.edit({
-							text: "<b>New session queued.</b>\n\nPi will switch to a fresh session after the queued command runs.",
-							parseMode: "html",
-							replyMarkup: { inline_keyboard: [] },
-						});
-						await sectionCtx.answerCallback("New session queued.");
-						queuePiNewSession(pi);
+						try {
+							await triggerPiTuiCommand(PI_NEW_COMMAND, latestContext);
+							await sectionCtx.edit({
+								text: "<b>New session command sent.</b>",
+								parseMode: "html",
+								replyMarkup: { inline_keyboard: [] },
+							});
+							await sectionCtx.answerCallback("New session command sent.");
+						} catch (error) {
+							await sectionCtx.edit({
+								text: `New session failed: ${errorMessage(error)}`,
+								parseMode: "plain",
+								replyMarkup: { inline_keyboard: [] },
+							});
+							await sectionCtx.answerCallback("New session failed.");
+						}
 						return "handled";
 					},
 				});
@@ -179,10 +211,12 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		latestContext = ctx;
 		ensureTelegramControls(ctx);
 	});
 
 	pi.on("session_shutdown", async () => {
+		latestContext = undefined;
 		unregisterTelegramReloadCommand?.();
 		unregisterTelegramReloadCommand = undefined;
 		unregisterTelegramNewCommand?.();
@@ -241,14 +275,24 @@ interface TelegramSectionRegistry {
 	register(section: TelegramSectionRegistration): () => void;
 }
 
-function queuePiReload(pi: ExtensionAPI): void {
-	pi.sendUserMessage(`/${TELEGRAM_RELOAD_PI_COMMAND}`, { deliverAs: "followUp" });
-}
+async function triggerPiTuiCommand(
+	commandName: string,
+	ctx?: ExtensionContext,
+): Promise<void> {
+	if (ctx && (!ctx.isIdle() || ctx.hasPendingMessages())) {
+		throw new Error("Pi is busy. Wait for the current turn to finish or send /abort first.");
+	}
 
-function queuePiNewSession(pi: ExtensionAPI): void {
-	// Queue Pi's built-in /new command instead of a custom internal command.
-	// This follows the same session replacement path as a local TUI /new.
-	pi.sendUserMessage(`/${PI_NEW_COMMAND}`, { deliverAs: "followUp" });
+	const pane = process.env.TMUX_PANE?.trim();
+	if (!pane) {
+		throw new Error(
+			"Pi TUI tmux pane was not detected. Telegram runtime controls currently require the Telegram-owning Pi to run inside tmux.",
+		);
+	}
+
+	await execFileAsync("tmux", ["send-keys", "-t", pane, "C-u", `/${commandName}`, "Enter"], {
+		windowsHide: true,
+	});
 }
 
 function registerTelegramCommandCompat(

@@ -9,12 +9,14 @@ Telegram-native runtime controls for [pi](https://pi.dev) sessions using [`@llbl
 - `/start` menu rows: `🔄 Reload runtime` and `🆕 New session`
 - Confirmation dialogs from the menu
 - Pi-side `/telegram-reload-runtime` command that calls `ctx.reload()`
-- Telegram `/new` queues Pi's built-in `/new` session command
+- Pi-side `/telegram-new-session` command that calls `ctx.newSession()`
+- Telegram controls dispatch TUI `/reload` and `/new` into the owning tmux pane
 
 ## Requirements
 
 - pi with extensions enabled
 - `@llblab/pi-telegram` installed, loaded first, and connected
+- The Telegram-owning Pi must be running inside tmux so the addon can send TUI slash commands to `TMUX_PANE`
 
 ## Install
 
@@ -38,3 +40,5 @@ Or open `/start` and tap `🔄 Reload runtime` or `🆕 New session`.
 This extension cannot solve the first load of a brand-new extension. Pi must load this package once through restart or terminal `/reload` before its Telegram controls exist.
 
 `/new` starts a fresh Pi session through Pi's built-in `/new` command. It does not delete the current session history.
+
+Why tmux dispatch? Pi extension `sendUserMessage()` intentionally skips slash-command execution, so a companion Telegram command cannot reliably run `/new` by queueing it as a prompt. This addon instead sends the actual TUI slash command to the Telegram-owning tmux pane, matching what a local operator would type.
