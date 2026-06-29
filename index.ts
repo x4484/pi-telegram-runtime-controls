@@ -12,6 +12,7 @@ const TELEGRAM_COMMAND_REGISTRY_KEY = "__piTelegramCommandRegistry__";
 const TELEGRAM_SECTION_REGISTRY_KEY = "__piTelegramSectionRegistry__";
 const TELEGRAM_RELOAD_PI_COMMAND = "telegram-reload-runtime";
 const TELEGRAM_NEW_PI_COMMAND = "telegram-new-session";
+const PI_NEW_COMMAND = "new";
 const TELEGRAM_RELOAD_COMMAND = "reload_runtime";
 const TELEGRAM_NEW_COMMAND = "new";
 const TELEGRAM_RELOAD_SECTION_ID = "pi-telegram-runtime-controls/reload";
@@ -162,6 +163,7 @@ export default function telegramRuntimeControls(pi: ExtensionAPI) {
 		description: "Start a fresh pi session from Telegram",
 		handler: async (_args, ctx) => {
 			ctx.ui.notify("Starting new pi session...", "info");
+			await ctx.waitForIdle();
 			const parentSession = ctx.sessionManager.getSessionFile();
 			const result = await ctx.newSession({
 				...(parentSession ? { parentSession } : {}),
@@ -244,7 +246,9 @@ function queuePiReload(pi: ExtensionAPI): void {
 }
 
 function queuePiNewSession(pi: ExtensionAPI): void {
-	pi.sendUserMessage(`/${TELEGRAM_NEW_PI_COMMAND}`, { deliverAs: "followUp" });
+	// Queue Pi's built-in /new command instead of a custom internal command.
+	// This follows the same session replacement path as a local TUI /new.
+	pi.sendUserMessage(`/${PI_NEW_COMMAND}`, { deliverAs: "followUp" });
 }
 
 function registerTelegramCommandCompat(

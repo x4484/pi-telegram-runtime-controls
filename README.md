@@ -9,7 +9,7 @@ Telegram-native runtime controls for [pi](https://pi.dev) sessions using [`@llbl
 - `/start` menu rows: `🔄 Reload runtime` and `🆕 New session`
 - Confirmation dialogs from the menu
 - Pi-side `/telegram-reload-runtime` command that calls `ctx.reload()`
-- Pi-side `/telegram-new-session` command that calls `ctx.newSession()`
+- Telegram `/new` queues Pi's built-in `/new` session command
 
 ## Requirements
 
@@ -37,4 +37,4 @@ Or open `/start` and tap `🔄 Reload runtime` or `🆕 New session`.
 
 This extension cannot solve the first load of a brand-new extension. Pi must load this package once through restart or terminal `/reload` before its Telegram controls exist.
 
-`/new` starts a fresh Pi session and records the previous session as the parent when available. It does not delete the current session history.
+`/new` starts a fresh Pi session through Pi's built-in `/new` command. It does not delete the current session history.
